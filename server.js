@@ -200,21 +200,20 @@ app.delete('/api/produtos/:id', (req, res) => {
 });
 
 // POST: Create a movement (with transaction for safety)
+// --- ROTA ALTERADA ---
 app.post('/api/movimentacoes', (req, res) => {
     const { produtoId, tipo, quantidade, motivo } = req.body;
 
-    if (!produtoId || !tipo || !quantidade || quantidade <= 0) {
+    if (!produtoId || !tipo || !quantidade || Number(quantidade) <= 0) {
         return res.status(400).json({ error: 'Invalid movement data.' });
     }
 
-    // `db.serialize` ensures that the database commands run in sequence.
     db.serialize(() => {
-        // Begin transaction
         db.run('BEGIN TRANSACTION;', (err) => {
             if (err) return res.status(500).json({ error: `Transaction start failed: ${err.message}` });
         });
 
-        const getProductSql = 'SELECT quantidade FROM produtos WHERE id = ?';
+        const getProductSql = 'SELECT * FROM produtos WHERE id = ?';
         db.get(getProductSql, [produtoId], (err, produto) => {
             if (err) {
                 db.run('ROLLBACK;');
@@ -257,14 +256,25 @@ app.post('/api/movimentacoes', (req, res) => {
                         return res.status(500).json({ error: `Movement creation failed: ${err.message}` });
                     }
 
-                    // If all goes well, commit the transaction
                     db.run('COMMIT;', (err) => {
                         if (err) {
-                            // If commit fails, we try to rollback, though it's unlikely to get here
                             db.run('ROLLBACK;');
                             return res.status(500).json({ error: `Transaction commit failed: ${err.message}` });
                         }
-                        res.status(201).json(novaMov);
+                        
+                        // --- ALTERAÇÃO INICIA AQUI ---
+                        // Após o sucesso, busca o produto recém-atualizado para retorná-lo
+                        const getUpdatedProductSql = 'SELECT * FROM produtos WHERE id = ?';
+                        db.get(getUpdatedProductSql, [produtoId], (err, produtoAtualizado) => {
+                            if (err) {
+                                // A transação já foi comitada, mas retornamos apenas a movimentação como fallback
+                                return res.status(201).json({ movimentacao: novaMov }); 
+                            }
+                            
+                            // Responde com um objeto contendo a movimentação e o produto atualizado
+                            res.status(201).json({ movimentacao: novaMov, produto: produtoAtualizado });
+                        });
+                        // --- ALTERAÇÃO TERMINA AQUI ---
                     });
                 });
             });
